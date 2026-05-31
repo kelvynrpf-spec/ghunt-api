@@ -18,49 +18,42 @@ def home():
         'status': 'online',
         'endpoints': {
             'check_email': '/check/email/<email>',
-            'check_gaia': '/check/gaia/<gaia_id>',
             'health': '/health'
         }
     })
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok'})
+    return jsonify({'status': 'ok', 'ghunt_path': GHUNT_PATH})
 
 @app.route('/check/email/<email>')
 def check_email(email):
     """Verifica informações de um email Google"""
     try:
+        # Tenta executar o GHunt
         result = subprocess.run(
-            ['python3', f'{GHUNT_PATH}/ghunt.py', 'email', email],
+            ['python3', 'check_email.py', email],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=90,
             cwd=GHUNT_PATH
         )
         
-        output = result.stdout
+        output = result.stdout + result.stderr
         
-        # Parse do output do GHunt
         info = {
             'email': email,
-            'exists': 'exists' in output.lower(),
-            'raw_output': output[:1000]
+            'exists': 'exists' in output.lower() or 'found' in output.lower(),
+            'raw_output': output[:2000]
         }
         
-        # Extrai nome se disponível
-        if 'name' in output.lower():
-            for line in output.split('\n'):
-                if 'name' in line.lower():
-                    info['name'] = line.split(':')[-1].strip()
-                    break
-        
-        # Extrai foto se disponível
-        if 'photo' in output.lower():
-            for line in output.split('\n'):
-                if 'photo' in line.lower() or 'avatar' in line.lower():
-                    info['photo'] = line.split(':')[-1].strip()
-                    break
+        # Tenta extrair nome
+        for line in output.split('\n'):
+            line_lower = line.lower()
+            if 'name' in line_lower and ':' in line:
+                info['name'] = line.split(':', 1)[-1].strip()
+            if 'photo' in line_lower and ('http' in line or 'ggpht' in line):
+                info['photo'] = line.split(':', 1)[-1].strip().split()[0]
         
         return jsonify({
             'success': True,
@@ -69,32 +62,9 @@ def check_email(email):
         })
         
     except subprocess.TimeoutExpired:
-        return jsonify({'error': 'Timeout'}), 408
+        return jsonify({'error': 'Timeout - busca demorou muito'}), 408
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/check/gaia/<gaia_id>')
-def check_gaia(gaia_id):
-    """Verifica informações por GAIA ID"""
-    try:
-        result = subprocess.run(
-            ['python3', f'{GHUNT_PATH}/ghunt.py', 'gaia', gaia_id],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=GHUNT_PATH
-        )
-        
-        return jsonify({
-            'success': True,
-            'gaia_id': gaia_id,
-            'data': {
-                'raw_output': result.stdout[:1000]
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'email': email}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)
